@@ -1,4 +1,4 @@
-name: Build Gemini Android APK
+name: Build Gemini Mobile APK
 
 on:
   workflow_dispatch:
@@ -11,42 +11,95 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
 
+      - name: Install SVG renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Add Android platform
+      - name: Generate Android project
         run: npx cap add android
 
-      - name: Configure mobile Firefox-style user agent
+      - name: Generate Gemini launcher icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s assets/gemini-logo.svg
+
+          RES=android/app/src/main/res
+          mkdir -p "$RES/drawable-nodpi"
+          mkdir -p "$RES/mipmap-anydpi-v26"
+
+          rsvg-convert -w 432 -h 432 \
+            assets/gemini-logo.svg \
+            -o "$RES/drawable-nodpi/ic_launcher_foreground.png"
+
+          for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            density="${spec%%:*}"
+            size="${spec##*:}"
+            mkdir -p "$RES/mipmap-$density"
+
+            rsvg-convert -w "$size" -h "$size" \
+              assets/gemini-logo.svg \
+              -o "$RES/mipmap-$density/ic_launcher.png"
+
+            cp "$RES/mipmap-$density/ic_launcher.png" \
+               "$RES/mipmap-$density/ic_launcher_round.png"
+          done
+
+          cat > "$RES/values/ic_launcher_background.xml" <<'XML'
+          <resources>
+              <color name="ic_launcher_background">#131314</color>
+          </resources>
+          XML
+
+          for name in ic_launcher ic_launcher_round; do
+            cat > "$RES/mipmap-anydpi-v26/$name.xml" <<XML
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          XML
+          done
+
+      - name: Configure mobile Firefox user agent
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path("android/app/src/main/java/com/summit/geminimobile/MainActivity.java")
+          if not p.exists():
+              matches = list(Path("android/app/src/main/java").rglob("MainActivity.java"))
+              if len(matches) != 1:
+                  raise SystemExit("Could not identify MainActivity.java")
+              p = matches[0]
+
           s = p.read_text()
-          s = s.replace(
-              "import com.getcapacitor.BridgeActivity;",
-              "import com.getcapacitor.BridgeActivity;\n"
-              "import android.os.Bundle;"
-          )
-          s = s.replace(
-              "public class MainActivity extends BridgeActivity {}",
-              """public class MainActivity extends BridgeActivity {
+          if "setUserAgentString" not in s:
+              s = s.replace(
+                  "import com.getcapacitor.BridgeActivity;",
+                  "import com.getcapacitor.BridgeActivity;\n"
+                  "import android.os.Bundle;"
+              )
+              s = s.replace(
+                  "public class MainActivity extends BridgeActivity {}",
+                  """public class MainActivity extends BridgeActivity {
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
@@ -55,18 +108,17 @@ jobs:
                   );
               }
           }"""
-          )
+              )
           p.write_text(s)
           PY
 
-      - name: Build debug APK
+      - name: Build APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Gemini-Mobile-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk

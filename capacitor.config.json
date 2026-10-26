@@ -1,0 +1,8 @@
+{
+  "appId": "com.summit.geminimobile",
+  "appName": "Gemini",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

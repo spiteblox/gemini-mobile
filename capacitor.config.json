@@ -3,6 +3,12 @@
   "appName": "Gemini",
   "webDir": "www",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "gemini.google.com",
+      "*.google.com",
+      "*.googleusercontent.com",
+      "*.gstatic.com"
+    ]
   }
 }
